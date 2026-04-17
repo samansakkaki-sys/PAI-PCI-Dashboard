@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
     title="PAI Dashboard API",
-    version="0.9.0",
+    version="0.6.0",
     description="FastAPI backend for live PAI/PCI dashboard.",
 )
 
@@ -42,7 +42,7 @@ history_cache: dict = {
 
 @app.get("/")
 async def read_root() -> dict[str, str]:
-    return {"message": "PAI Dashboard API NEW BUILD"}
+   return {"message": "PAI Dashboard API is running"}
 
 
 @app.get("/health")

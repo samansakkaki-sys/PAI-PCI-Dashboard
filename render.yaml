@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: pai-dashboard-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: HISTORY_API_URL
+        sync: false
+      - key: CORS_ALLOW_ORIGINS
+        sync: false

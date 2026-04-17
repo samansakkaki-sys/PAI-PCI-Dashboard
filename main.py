@@ -6,6 +6,8 @@ import requests
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from category_normalization import normalize_category
+
 app = FastAPI(
     title="PAI Dashboard API",
     version="0.6.0",
@@ -58,6 +60,17 @@ def normalize_row_keys(row: dict) -> dict:
     return normalized
 
 
+def attach_category_metadata(row: dict) -> dict:
+    category_key = find_key(row, "category")
+    raw_category = str(row.get(category_key) or "").strip() if category_key else ""
+    normalized_category = normalize_category(raw_category)
+    row["category_raw"] = raw_category
+    row["category_normalized"] = normalized_category
+    if category_key:
+        row["category"] = normalized_category
+    return row
+
+
 def find_key(row: dict, target: str) -> Optional[str]:
     target_clean = target.strip().lower()
     for key in row.keys():
@@ -90,7 +103,11 @@ def fetch_history_from_source() -> list[dict]:
             detail="History endpoint returned unexpected data format.",
         )
 
-    return [normalize_row_keys(row) for row in data if isinstance(row, dict)]
+    return [
+        attach_category_metadata(normalize_row_keys(row))
+        for row in data
+        if isinstance(row, dict)
+    ]
 
 
 def load_history_data() -> list[dict]:
@@ -166,7 +183,7 @@ def filter_history_by_category(data: list[dict], category: Optional[str] = None)
     if category_key is None or not category:
         return data
 
-    category_clean = category.strip().lower()
+    category_clean = normalize_category(category).lower()
     return [
         row
         for row in data
@@ -235,6 +252,7 @@ def serialize_history_row(row: dict, fields: dict[str, str]) -> dict:
 
     return {
         "category": str(row.get("category") or "").strip(),
+        "category_raw": str(row.get("category_raw") or "").strip(),
         "date": row.get("date"),
         "time": row.get("time"),
         "timestamp_label": build_timestamp_label(row),
@@ -278,7 +296,7 @@ def parse_categories_param(categories: list[str]) -> list[str]:
     parsed: list[str] = []
     for value in categories:
         for item in value.split(","):
-            clean_item = item.strip()
+            clean_item = normalize_category(item)
             if clean_item and clean_item not in parsed:
                 parsed.append(clean_item)
     return parsed
@@ -366,7 +384,10 @@ async def get_compare_data(
     return [
         {
             "category": category,
-            "history": serialize_history_rows(rows_by_category.get(category, []), metric_mode),
+            "history": serialize_history_rows(
+                rows_by_category.get(category, []),
+                metric_mode,
+            ),
         }
         for category in selected_categories
     ]

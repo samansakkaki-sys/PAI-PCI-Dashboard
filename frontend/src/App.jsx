@@ -128,6 +128,14 @@ function buildCompareRows(compareData) {
   return Array.from(merged.values());
 }
 
+function buildMainSeries(metricType, selectedChannels) {
+  return selectedChannels.map((channel) => ({
+    key: `${metricType}_${channel}`,
+    label: CHANNEL_META[channel].label,
+    color: metricType === "pai" ? CHANNEL_META[channel].paiColor : CHANNEL_META[channel].pciColor,
+  }));
+}
+
 function SummaryCard({ label, value, accent }) {
   return (
     <div className="summary-card">
@@ -243,10 +251,10 @@ function TrendPanel({
   title,
   subtitle,
   data,
-  dataKey,
-  lineLabel,
-  color,
+  lines,
   threshold,
+  hiddenLines,
+  onToggleLegend,
   loading,
   empty,
   emptyText,
@@ -271,22 +279,35 @@ function TrendPanel({
               <XAxis dataKey="shortLabel" minTickGap={28} />
               <YAxis tickFormatter={formatPercent} domain={[0, 1]} />
               <Tooltip content={<CustomTooltip />} />
+              {lines.length > 1 ? (
+                <Legend
+                  verticalAlign="top"
+                  content={
+                    <CustomLegend hiddenLines={hiddenLines} onToggle={onToggleLegend} />
+                  }
+                />
+              ) : null}
               <ReferenceLine
                 y={threshold}
                 stroke="#dc2626"
                 strokeDasharray="6 6"
                 label="Threshold"
               />
-              <Line
-                type="monotone"
-                dataKey={dataKey}
-                name={lineLabel}
-                stroke={color}
-                strokeWidth={3}
-                dot={false}
-                activeDot={{ r: 4 }}
-                connectNulls
-              />
+              {lines.map((line) =>
+                hiddenLines[line.key] ? null : (
+                  <Line
+                    key={line.key}
+                    type="monotone"
+                    dataKey={line.key}
+                    name={line.label}
+                    stroke={line.color}
+                    strokeWidth={3}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                    connectNulls
+                  />
+                )
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -300,11 +321,12 @@ function App() {
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedCompareCategories, setSelectedCompareCategories] = useState([]);
   const [metricMode, setMetricMode] = useState("weighted");
-  const [selectedChannel, setSelectedChannel] = useState("retail");
+  const [selectedChannels, setSelectedChannels] = useState(["retail"]);
   const [historyRows, setHistoryRows] = useState([]);
   const [rankings, setRankings] = useState({ top_pai: [], worst_pci: [] });
   const [compareRows, setCompareRows] = useState([]);
-  const [hiddenLines, setHiddenLines] = useState({});
+  const [hiddenMainLines, setHiddenMainLines] = useState({});
+  const [hiddenCompareLines, setHiddenCompareLines] = useState({});
   const [error, setError] = useState("");
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -450,7 +472,11 @@ function App() {
   }, [selectedCompareCategories, metricMode]);
 
   useEffect(() => {
-    setHiddenLines({});
+    setHiddenMainLines({});
+  }, [selectedChannels, metricMode, selectedCategory]);
+
+  useEffect(() => {
+    setHiddenCompareLines({});
   }, [selectedCompareCategories, metricMode]);
 
   const chartData = useMemo(() => buildChartRows(historyRows), [historyRows]);
@@ -467,9 +493,14 @@ function App() {
     [compareRows]
   );
 
-  const activeChannelMeta = CHANNEL_META[selectedChannel];
-  const activePaiKey = `pai_${selectedChannel}`;
-  const activePciKey = `pci_${selectedChannel}`;
+  const paiLines = useMemo(
+    () => buildMainSeries("pai", selectedChannels),
+    [selectedChannels]
+  );
+  const pciLines = useMemo(
+    () => buildMainSeries("pci", selectedChannels),
+    [selectedChannels]
+  );
   const compareLines = useMemo(
     () => ({
       pai: selectedCompareCategories.map((category, index) => ({
@@ -498,13 +529,78 @@ function App() {
     });
   };
 
-  const toggleLegendLine = (dataKey) => {
-    setHiddenLines((current) => ({
+  const toggleSelectedChannel = (channel) => {
+    setSelectedChannels((current) => {
+      if (current.includes(channel)) {
+        if (current.length === 1) {
+          return current;
+        }
+        return current.filter((item) => item !== channel);
+      }
+      return [...current, channel];
+    });
+  };
+
+  const toggleMainLegendLine = (dataKey) => {
+    setHiddenMainLines((current) => {
+      const nextValue = !current[dataKey];
+      const currentlyVisible = paiLines
+        .concat(pciLines)
+        .filter((line, index, all) => all.findIndex((item) => item.key === line.key) === index)
+        .filter((line) => !current[line.key]).length;
+
+      if (nextValue && currentlyVisible <= 1) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [dataKey]: nextValue,
+      };
+    });
+  };
+
+  const toggleCompareLegendLine = (dataKey) => {
+    setHiddenCompareLines((current) => ({
       ...current,
       [dataKey]: !current[dataKey],
     }));
   };
 
+  const mainSummaryCards = useMemo(() => {
+    if (!latest) {
+      return [];
+    }
+
+    const cards = [];
+    selectedChannels.forEach((channel) => {
+      cards.push({
+        label: `Latest PAI ${CHANNEL_META[channel].label}`,
+        value: formatPercent(latest[`pai_${channel}`]),
+        accent: CHANNEL_META[channel].paiColor,
+      });
+      cards.push({
+        label: `Latest PCI ${CHANNEL_META[channel].label}`,
+        value: formatPercent(latest[`pci_${channel}`]),
+        accent: CHANNEL_META[channel].pciColor,
+      });
+    });
+    cards.push({
+      label: "Metric Mode",
+      value: formatModeLabel(metricMode),
+      accent: "#111827",
+    });
+    cards.push({
+      label: "Latest Timestamp",
+      value: latest.fullLabel || "--",
+      accent: "#334155",
+    });
+    return cards;
+  }, [latest, metricMode, selectedChannels]);
+
+  const channelSummaryText = selectedChannels
+    .map((channel) => CHANNEL_META[channel].label)
+    .join(" / ");
   const isSingleEmpty = !loadingHistory && !chartData.length && !error;
   const isCompareEmpty = !loadingCompare && !compareChartData.length && !error;
 
@@ -516,12 +612,12 @@ function App() {
             <p className="eyebrow">PAI / PCI Dashboard</p>
             <h1>Live category quality trends</h1>
             <p className="hero-copy">
-              Track weighted or unweighted PAI/PCI performance by category and
-              channel, with total availability and Jalali timestamps.
+              Track weighted or unweighted PAI/PCI performance by category with
+              normalized categories, Jalali timestamps, and multi-channel overlays.
             </p>
           </div>
           <div className="hero-chip">
-            {formatModeLabel(metricMode)} / {activeChannelMeta.label}
+            {formatModeLabel(metricMode)} / {channelSummaryText}
           </div>
         </header>
 
@@ -566,19 +662,22 @@ function App() {
               </div>
             </div>
 
-            <div className="control-group">
-              <span className="control-label">Channel</span>
-              <div className="segmented-control">
-                {CHANNEL_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={`segmented-button${selectedChannel === option.value ? " is-active" : ""}`}
-                    onClick={() => setSelectedChannel(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+            <div className="control-group control-grow">
+              <span className="control-label">Channels</span>
+              <div className="chip-list">
+                {CHANNEL_OPTIONS.map((option) => {
+                  const active = selectedChannels.includes(option.value);
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={`chip${active ? " chip-active" : ""}`}
+                      onClick={() => toggleSelectedChannel(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -601,39 +700,27 @@ function App() {
           {error ? <div className="error-banner">{error}</div> : null}
         </section>
 
-        {!isSingleEmpty && latest ? (
+        {!isSingleEmpty && mainSummaryCards.length ? (
           <section className="summary-grid">
-            <SummaryCard
-              label={`Latest PAI ${activeChannelMeta.label}`}
-              value={formatPercent(latest[activePaiKey])}
-              accent={activeChannelMeta.paiColor}
-            />
-            <SummaryCard
-              label={`Latest PCI ${activeChannelMeta.label}`}
-              value={formatPercent(latest[activePciKey])}
-              accent={activeChannelMeta.pciColor}
-            />
-            <SummaryCard
-              label="Metric Mode"
-              value={formatModeLabel(metricMode)}
-              accent="#111827"
-            />
-            <SummaryCard
-              label="Latest Timestamp"
-              value={latest.fullLabel || "--"}
-              accent="#334155"
-            />
+            {mainSummaryCards.map((card) => (
+              <SummaryCard
+                key={card.label}
+                label={card.label}
+                value={card.value}
+                accent={card.accent}
+              />
+            ))}
           </section>
         ) : null}
 
         <TrendPanel
           title="PAI Trend"
-          subtitle={`${activeChannelMeta.label} availability in ${formatModeLabel(metricMode).toLowerCase()} mode`}
+          subtitle={`${channelSummaryText} availability in ${formatModeLabel(metricMode).toLowerCase()} mode`}
           data={chartData}
-          dataKey={activePaiKey}
-          lineLabel={`PAI ${activeChannelMeta.label}`}
-          color={activeChannelMeta.paiColor}
+          lines={paiLines}
           threshold={PAI_THRESHOLD}
+          hiddenLines={hiddenMainLines}
+          onToggleLegend={toggleMainLegendLine}
           loading={loadingHistory}
           empty={isSingleEmpty}
           emptyText="There is no history available for the selected category and metric mode."
@@ -641,12 +728,12 @@ function App() {
 
         <TrendPanel
           title="PCI Trend"
-          subtitle={`${activeChannelMeta.label} PCI in ${formatModeLabel(metricMode).toLowerCase()} mode`}
+          subtitle={`${channelSummaryText} PCI in ${formatModeLabel(metricMode).toLowerCase()} mode`}
           data={chartData}
-          dataKey={activePciKey}
-          lineLabel={`PCI ${activeChannelMeta.label}`}
-          color={activeChannelMeta.pciColor}
+          lines={pciLines}
           threshold={PCI_THRESHOLD}
+          hiddenLines={hiddenMainLines}
+          onToggleLegend={toggleMainLegendLine}
           loading={loadingHistory}
           empty={isSingleEmpty}
           emptyText="There is no history available for the selected category and metric mode."
@@ -656,7 +743,7 @@ function App() {
           <div className="panel-header">
             <div>
               <h2>Compare Categories</h2>
-              <p>Comparison remains total-only so the main filters stay stable and predictable.</p>
+              <p>Comparison remains total-only so the main charts stay channel-focused.</p>
             </div>
           </div>
           <div className="chip-list">
@@ -714,7 +801,12 @@ function App() {
                   <Tooltip content={<CustomTooltip />} />
                   <Legend
                     verticalAlign="top"
-                    content={<CustomLegend hiddenLines={hiddenLines} onToggle={toggleLegendLine} />}
+                    content={
+                      <CustomLegend
+                        hiddenLines={hiddenCompareLines}
+                        onToggle={toggleCompareLegendLine}
+                      />
+                    }
                   />
                   <ReferenceLine
                     y={PAI_THRESHOLD}
@@ -723,7 +815,7 @@ function App() {
                     label="Threshold"
                   />
                   {compareLines.pai.map((line) =>
-                    hiddenLines[line.key] ? null : (
+                    hiddenCompareLines[line.key] ? null : (
                       <Line
                         key={line.key}
                         type="monotone"
@@ -767,7 +859,12 @@ function App() {
                   <Tooltip content={<CustomTooltip />} />
                   <Legend
                     verticalAlign="top"
-                    content={<CustomLegend hiddenLines={hiddenLines} onToggle={toggleLegendLine} />}
+                    content={
+                      <CustomLegend
+                        hiddenLines={hiddenCompareLines}
+                        onToggle={toggleCompareLegendLine}
+                      />
+                    }
                   />
                   <ReferenceLine
                     y={PCI_THRESHOLD}
@@ -776,7 +873,7 @@ function App() {
                     label="Threshold"
                   />
                   {compareLines.pci.map((line) =>
-                    hiddenLines[line.key] ? null : (
+                    hiddenCompareLines[line.key] ? null : (
                       <Line
                         key={line.key}
                         type="monotone"
